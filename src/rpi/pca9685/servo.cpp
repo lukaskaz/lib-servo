@@ -1,25 +1,24 @@
-#include "servo/interfaces/rpi5/pca9685/servo.hpp"
+#include "servo/interfaces/rpi/pca9685/servo.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <fstream>
 #include <functional>
-#include <iostream>
 #include <ranges>
 
-namespace servo::rpi5::pca9685
+namespace servo::rpi::pca9685
 {
-
-using namespace std::chrono_literals;
 
 struct Servo::Handler
 {
   public:
-    explicit Handler(const config_t& config)
+    explicit Handler(const config_t& config) :
+        driverpath{std::get<std::string>(config)}
     {
-        std::ranges::for_each(config, [this](const auto& servoconfig) {
-            group.push_back(std::make_shared<Single>(servoconfig));
-        });
+        std::ranges::for_each(
+            std::get<std::vector<servoconfig_t>>(config),
+            [this](const auto& servoconfig) {
+                group.push_back(std::make_shared<Single>(this, servoconfig));
+            });
     }
 
     ~Handler()
@@ -64,15 +63,12 @@ struct Servo::Handler
     class Single
     {
       public:
-        explicit Single(const servoconfig_t& config) :
-            id{num++}, startpos{std::get<1>(config)},
-            endpos{std::get<2>(config)}
+        Single(Handler* handler, const servoconfig_t& config) :
+            handler{handler}, id{num++}, pwm{"pwm" + std::to_string(id)},
+            initdelay{std::get<1>(config)}, wrdelay{std::get<2>(config)},
+            startpos{std::get<3>(config)}, endpos{std::get<4>(config)}
         {
-            writesysfs("/sys/class/pwm/pwmchip0/export", id);
-            writesysfs("/sys/class/pwm/pwmchip0/pwm" + std::to_string(id) +
-                           "/period",
-                       pwmperiod);
-
+            setup();
             switch (std::get<0>(config))
             {
                 case mounttype::normal:
@@ -99,7 +95,7 @@ struct Servo::Handler
         }
         ~Single()
         {
-            writesysfs("/sys/class/pwm/pwmchip0/unexport", id);
+            release();
         }
 
         bool movestart()
@@ -123,37 +119,52 @@ struct Servo::Handler
         }
 
       private:
+        static uint32_t num;
+        const Handler* const handler;
         const uint32_t id;
+        const std::string pwm;
         const int32_t pctmin{0};
         const int32_t pctmax{100};
+        const std::chrono::milliseconds initdelay;
+        const std::chrono::milliseconds wrdelay;
         const int32_t startpos;
         const int32_t endpos;
-        const uint32_t pwmperiod{20000000};
+        const uint32_t period{20000000};
         std::function<int32_t(int32_t)> dutycalc;
-        static uint32_t num;
+
+        bool writesysfs(const std::string& path, uint32_t val) const
+        {
+            return writesysfs(path, val, wrdelay);
+        }
 
         bool writesysfs(const std::string& path, uint32_t val,
-                        std::chrono::milliseconds delay = 25ms) const
+                        std::chrono::milliseconds delay) const
         {
-            std::ofstream ofs(path);
+            std::ofstream ofs{path};
             if (!ofs.is_open())
-            {
                 throw std::runtime_error("Cannot open sysfs file " + path);
-            }
-            ofs << val;
-            ofs.close();
+            ofs << val << std::flush;
             usleep((uint32_t)delay.count() * 1000);
             return true;
         }
 
+        bool setup() const
+        {
+            writesysfs(handler->driverpath + "export", id, initdelay);
+            return writesysfs(handler->driverpath + pwm + "/period", period);
+        }
+
+        bool release() const
+        {
+            return writesysfs(handler->driverpath + "unexport", id);
+        }
+
         bool setpwm(uint32_t val) const
         {
-            std::cout << "setting duty -> " << val << std::endl;
-            return writesysfs("/sys/class/pwm/pwmchip0/pwm" +
-                                  std::to_string(id) + "/duty_cycle",
-                              val);
+            return writesysfs(handler->driverpath + pwm + "/duty_cycle", val);
         }
     };
+    const std::string driverpath;
     std::vector<std::shared_ptr<Single>> group;
 
     std::shared_ptr<Single> getservo(uint32_t num)
@@ -201,4 +212,4 @@ bool Servo::moveto(uint32_t num, int32_t pos)
     return handler->moveto(num, pos);
 }
 
-} // namespace servo::rpi5::pca9685
+} // namespace servo::rpi::pca9685
