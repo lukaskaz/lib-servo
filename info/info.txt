@@ -1,0 +1,2 @@
+dtoverlay=i2c-pwm-pca9685a,addr=0x40
+
