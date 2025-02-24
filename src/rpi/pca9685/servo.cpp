@@ -1,12 +1,18 @@
 #include "servo/interfaces/rpi/pca9685/servo.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <ranges>
 
 namespace servo::rpi::pca9685
 {
+
+using namespace std::chrono_literals;
+using namespace std::string_literals;
 
 struct Servo::Handler
 {
@@ -24,6 +30,8 @@ struct Servo::Handler
     ~Handler()
     {
         moveend();
+        // wait for servo to reach position before releasing driver
+        setdelay(100ms);
     }
 
     bool movestart()
@@ -65,8 +73,7 @@ struct Servo::Handler
       public:
         Single(Handler* handler, const servoconfig_t& config) :
             handler{handler}, id{num++}, pwm{"pwm" + std::to_string(id)},
-            initdelay{std::get<1>(config)}, wrdelay{std::get<2>(config)},
-            startpos{std::get<3>(config)}, endpos{std::get<4>(config)}
+            startpos{std::get<1>(config)}, endpos{std::get<2>(config)}
         {
             setup();
             switch (std::get<0>(config))
@@ -108,7 +115,7 @@ struct Servo::Handler
             return setpwm(dutycalc(pctmax));
         }
 
-        bool moveto(int32_t pos) const
+        bool moveto(int32_t pos)
         {
             if (pos >= pctmin && pos <= pctmax)
             {
@@ -125,47 +132,127 @@ struct Servo::Handler
         const std::string pwm;
         const int32_t pctmin{0};
         const int32_t pctmax{100};
-        const std::chrono::milliseconds initdelay;
-        const std::chrono::milliseconds wrdelay;
         const int32_t startpos;
         const int32_t endpos;
         const uint32_t period{20000000};
         std::function<int32_t(int32_t)> dutycalc;
+        std::future<void> async;
 
-        bool writesysfs(const std::string& path, uint32_t val) const
+        template <typename T>
+        bool wrsysfs(const std::string& path, const T& val) const
         {
-            return writesysfs(path, val, wrdelay);
+            if (std::ofstream ofs{path}; ofs.is_open())
+            {
+                ofs << val << std::flush;
+                return true;
+            }
+            throw std::runtime_error("Cannot open sysfs output file " + path);
         }
 
-        bool writesysfs(const std::string& path, uint32_t val,
-                        std::chrono::milliseconds delay) const
+        template <typename T>
+        bool rdsysfs(const std::string& path, T& ret) const
         {
-            std::ofstream ofs{path};
-            if (!ofs.is_open())
-                throw std::runtime_error("Cannot open sysfs file " + path);
-            ofs << val << std::flush;
-            usleep((uint32_t)delay.count() * 1000);
+            if (std::ifstream ifs{path}; ifs.is_open())
+            {
+                ifs >> ret;
+                return true;
+            }
+            throw std::runtime_error("Cannot open sysfs input file " + path);
+        }
+
+        template <typename T>
+        bool wrsysfsset(const std::string& path, const T& val) const
+        {
+            if (T ret{}; wrsysfs(path, val) && rdsysfs(path, ret) && ret == val)
+                return true;
+            throw std::runtime_error("Cannot set value for sysfs file " + path);
+        }
+
+        template <typename T>
+        bool wrsysfscreate(const std::string& path, const T& val,
+                           const std::string& name) const
+        {
+            const auto directory =
+                std::filesystem::path{path}.parent_path() / name;
+            if (wrsysfs(path, val))
+            {
+                uint32_t retries{100};
+                while (retries--)
+                {
+                    handler->setdelay(1ms);
+                    if (std::filesystem::exists(directory) &&
+                        std::ofstream{directory}.is_open())
+                        return true;
+                }
+            }
+            throw std::runtime_error("Cannot create module via sysfs " +
+                                     std::string(directory));
+        }
+
+        template <typename T>
+        bool wrsysfsremove(const std::string& path, const T& val,
+                           const std::string& name) const
+        {
+            const auto directory =
+                std::filesystem::path{path}.parent_path() / name;
+            if (wrsysfs(path, val))
+            {
+                uint32_t retries{100};
+                while (retries--)
+                {
+                    if (!std::filesystem::exists(directory))
+                        return true;
+                    handler->setdelay(1ms);
+                }
+            }
+            throw std::runtime_error("Cannot remove module via sysfs " +
+                                     std::string(directory));
+        }
+
+        bool setup()
+        {
+            return useasync([this]() {
+                wrsysfscreate(handler->driverpath + "export", id,
+                              pwm + "/enable");
+                wrsysfsset(handler->driverpath + pwm + "/enable", 0);
+                wrsysfsset(handler->driverpath + pwm + "/period", period);
+                wrsysfsset(handler->driverpath + pwm + "/polarity", "normal"s);
+                // wrsysfsset(handler->driverpath + pwm + "/polarity",
+                //            "inversed"s);
+                wrsysfsset(handler->driverpath + pwm + "/enable", 1);
+            });
+        }
+
+        bool release()
+        {
+            return useasync([this]() {
+                wrsysfsset(handler->driverpath + pwm + "/enable", 0);
+                wrsysfsremove(handler->driverpath + "unexport", id, pwm);
+            });
+        }
+
+        bool setpwm(uint32_t val)
+        {
+            return useasync([this, val]() {
+                wrsysfsset(handler->driverpath + pwm + "/duty_cycle", val);
+            });
+        }
+
+        bool useasync(std::function<void()>&& func)
+        {
+            if (async.valid())
+                async.wait();
+            async = std::async(std::launch::async, std::move(func));
             return true;
-        }
-
-        bool setup() const
-        {
-            writesysfs(handler->driverpath + "export", id, initdelay);
-            return writesysfs(handler->driverpath + pwm + "/period", period);
-        }
-
-        bool release() const
-        {
-            return writesysfs(handler->driverpath + "unexport", id);
-        }
-
-        bool setpwm(uint32_t val) const
-        {
-            return writesysfs(handler->driverpath + pwm + "/duty_cycle", val);
-        }
+        };
     };
     const std::string driverpath;
     std::vector<std::shared_ptr<Single>> group;
+
+    void setdelay(std::chrono::milliseconds time) const
+    {
+        usleep((uint32_t)time.count() * 1000);
+    }
 
     std::shared_ptr<Single> getservo(uint32_t num)
     {
