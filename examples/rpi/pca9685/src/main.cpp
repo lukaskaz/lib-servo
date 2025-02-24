@@ -9,7 +9,6 @@ int main(int argc, char** argv)
     try
     {
         const std::string driverpath{"/sys/class/pwm/pwmchip0/"};
-        auto initlatency{30ms}, cmdslatency{5ms};
         if (argc == 3)
         {
             std::cout
@@ -24,7 +23,7 @@ int main(int argc, char** argv)
             std::ranges::for_each(sequence, [&](uint8_t num) {
                 std::get<std::vector<servoconfig_t>>(config).emplace_back(
                     num % 2 == 0 ? mounttype::normal : mounttype::inverted,
-                    initlatency, cmdslatency, startpos, endpos);
+                    startpos, endpos);
             });
 
             auto iface = servo::Factory::create<Servo, config_t>(config);
@@ -51,7 +50,7 @@ int main(int argc, char** argv)
             std::ranges::for_each(sequence, [&](uint8_t num) {
                 std::get<std::vector<servoconfig_t>>(config).emplace_back(
                     num % 2 == 0 ? mounttype::normal : mounttype::inverted,
-                    initlatency, cmdslatency, startpos, endpos);
+                    startpos, endpos);
             });
 
             auto iface = servo::Factory::create<Servo, config_t>(config);
