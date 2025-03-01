@@ -3,19 +3,13 @@
 #include "log/interfaces/logging.hpp"
 #include "servo/factory.hpp"
 
-#include <cstdint>
 #include <tuple>
+#include <vector>
 
-namespace servo::rpi::pca9685
+namespace servo::group
 {
 
-enum class mounttype
-{
-    normal,
-    inverted
-};
-
-using config_t = std::tuple<std::string, uint32_t, mounttype, double, double,
+using config_t = std::tuple<std::vector<std::shared_ptr<servo::ServoIf>>,
                             std::shared_ptr<logging::LogIf>>;
 
 class Servo : public ServoIf
@@ -34,4 +28,4 @@ class Servo : public ServoIf
     std::unique_ptr<Handler> handler;
 };
 
-} // namespace servo::rpi::pca9685
+} // namespace servo::group
