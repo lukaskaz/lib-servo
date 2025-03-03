@@ -68,11 +68,6 @@ struct Servo::Handler
         if (logif)
             logif->log(type, std::string{loc.function_name()}, msg);
     }
-
-    void setdelay(std::chrono::milliseconds time) const
-    {
-        usleep((uint32_t)time.count() * 1000);
-    }
 };
 
 Servo::Servo(const config_t& config) :

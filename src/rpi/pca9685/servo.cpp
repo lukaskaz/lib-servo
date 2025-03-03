@@ -9,10 +9,6 @@
 namespace servo::rpi::pca9685
 {
 
-using namespace pwm::rpi::pca9685;
-using namespace std::chrono_literals;
-using namespace std::string_literals;
-
 struct Servo::Handler
 {
   public:
@@ -21,10 +17,11 @@ struct Servo::Handler
         driverpath{std::get<0>(config)}, id{std::get<1>(config)},
         startpos{std::get<3>(config)}, endpos{std::get<4>(config)}
     {
+        using namespace pwm::rpi::pca9685;
         pwmif = pwm::Factory::create<Pwm, pwm::rpi::pca9685::config_t>(
             {id, 0, freqhz, polaritytype::normal, "/sys/class/pwm/pwmchip2",
              logif});
-        // setup();
+
         switch (std::get<2>(config))
         {
             case mounttype::normal:
@@ -38,7 +35,7 @@ struct Servo::Handler
                         duty = pctset * (endpos - startpos) / pctmax + startpos;
                     log(logging::type::debug,
                         "Servo duty[" + std::to_string(id) + "/norm]: '" +
-                            std::to_string(duty) + "' from prec '" +
+                            std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
                     return duty;
                 };
@@ -54,7 +51,7 @@ struct Servo::Handler
                         duty = pctset * (startpos - endpos) / pctmax + endpos;
                     log(logging::type::debug,
                         "Servo duty[" + std::to_string(id) + "/invr]: '" +
-                            std::to_string(duty) + "' from prec '" +
+                            std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
                     return duty;
                 };
@@ -71,31 +68,22 @@ struct Servo::Handler
 
     ~Handler()
     {
-        // release();
-        moveend();
-        // wait for servo to reach position before releasing driver
-        setdelay(100ms);
         log(logging::type::info, "Removed servo: " + std::to_string(id));
     }
 
     bool movestart()
     {
-        return pwmif->setduty(dutycalc(pctmin));
+        return setpwm(pctmin);
     }
 
     bool moveend()
     {
-        return pwmif->setduty(dutycalc(pctmax));
+        return setpwm(pctmax);
     }
 
-    bool moveto(double pos)
+    bool moveto(double pctpos)
     {
-        if (pos >= pctmin && pos <= pctmax)
-        {
-            return pwmif->setduty(dutycalc(pos));
-        }
-        throw std::runtime_error(
-            "Servo set to move outside range of percent position");
+        return setpwm(pctpos);
     }
 
   private:
@@ -106,45 +94,23 @@ struct Servo::Handler
     const double pctmax{100.};
     const double startpos;
     const double endpos;
-    // const uint32_t period{20000000};
-    const uint32_t freqhz{50};
+    const uint32_t freqhz{50}; // -> const uint32_t period{20000000};
     std::function<double(double)> dutycalc;
     std::future<void> async;
     std::shared_ptr<pwm::PwmIf> pwmif;
 
-    bool setup()
+    bool setpwm(double pctpos)
     {
-        return useasync([this]() {
-            // wrsysfscreate(handler->driverpath + "export", id,
-            //               pwm + "/enable");
-            // wrsysfsset(handler->driverpath + pwm + "/enable", 0);
-            // wrsysfsset(handler->driverpath + pwm + "/period", period);
-            // wrsysfsset(handler->driverpath + pwm + "/polarity",
-            // "normal"s);
-            // // wrsysfsset(handler->driverpath + pwm + "/polarity",
-            // //            "inversed"s);
-            // wrsysfsset(handler->driverpath + pwm + "/enable", 1);
-        });
-    }
-
-    bool release()
-    {
-        return useasync([this]() {
-            // wrsysfsset(handler->driverpath + pwm + "/enable", 0);
-            // wrsysfsremove(handler->driverpath + "unexport", id, pwm);
-        });
-    }
-
-    bool setpwm(uint32_t val)
-    {
-        return useasync([this, val]() {
-            // wrsysfsset(handler->driverpath + pwm + "/duty_cycle", val);
-        });
+        if (pctpos >= pctmin && pctpos <= pctmax)
+            return useasync(
+                [this, pctpos]() { pwmif->setduty(dutycalc(pctpos)); });
+        throw std::runtime_error(
+            "Servo set to move outside range of percent position: " +
+            std::to_string(pctpos));
     }
 
     bool useasync(std::function<void()>&& func)
     {
-        return true;
         if (async.valid())
             async.wait();
         async = std::async(std::launch::async, std::move(func));
@@ -158,17 +124,6 @@ struct Servo::Handler
         if (logif)
             logif->log(type, std::string{loc.function_name()}, msg);
     }
-
-    void setdelay(std::chrono::milliseconds time) const
-    {
-        usleep((uint32_t)time.count() * 1000);
-    }
-
-    // std::shared_ptr<Single> getservo(uint32_t num)
-    // {
-    //     throw std::runtime_error(
-    //         "Requested servo number is outside defined group");
-    // }
 };
 
 Servo::Servo(const config_t& config) :
