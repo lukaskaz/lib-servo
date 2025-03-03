@@ -1,268 +1,127 @@
 #include "servo/interfaces/rpi/pca9685/servo.hpp"
 
-#include <algorithm>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
+#include "pwm/interfaces/rpi/pca9685/pwm.hpp"
+
 #include <functional>
 #include <future>
-#include <ranges>
+#include <source_location>
 
 namespace servo::rpi::pca9685
 {
-
-using namespace std::chrono_literals;
-using namespace std::string_literals;
 
 struct Servo::Handler
 {
   public:
     explicit Handler(const config_t& config) :
-        driverpath{std::get<std::string>(config)}
+        logif{std::get<5>(config)}, id{std::get<1>(config)},
+        startpos{std::get<3>(config)}, endpos{std::get<4>(config)}
     {
-        std::ranges::for_each(
-            std::get<std::vector<servoconfig_t>>(config),
-            [this](const auto& servoconfig) {
-                group.push_back(std::make_shared<Single>(this, servoconfig));
-            });
+        using namespace pwm::rpi::pca9685;
+        pwmif = pwm::Factory::create<Pwm, pwm::rpi::pca9685::config_t>(
+            {id, 0, freqhz, polaritytype::normal, std::get<0>(config), logif});
+
+        switch (std::get<2>(config))
+        {
+            case mounttype::normal:
+                dutycalc = [this](double pctset) {
+                    double duty{};
+                    if (pctset == pctmin)
+                        duty = startpos;
+                    else if (pctset == pctmax)
+                        duty = endpos;
+                    else
+                        duty = pctset * (endpos - startpos) / pctmax + startpos;
+                    log(logging::type::debug,
+                        "Servo duty[" + std::to_string(id) + "/norm]: '" +
+                            std::to_string(duty) + "' from perc '" +
+                            std::to_string(pctset) + "'");
+                    return duty;
+                };
+                break;
+            case mounttype::inverted:
+                dutycalc = [this](double pctset) {
+                    double duty{};
+                    if (pctset == pctmin)
+                        duty = endpos;
+                    else if (pctset == pctmax)
+                        duty = startpos;
+                    else
+                        duty = pctset * (startpos - endpos) / pctmax + endpos;
+                    log(logging::type::debug,
+                        "Servo duty[" + std::to_string(id) + "/invr]: '" +
+                            std::to_string(duty) + "' from perc '" +
+                            std::to_string(pctset) + "'");
+                    return duty;
+                };
+                break;
+        }
+
+        log(logging::type::info,
+            "Created servo [id/mount/startpos/endpos]: " + std::to_string(id) +
+                "/" +
+                (std::get<2>(config) == mounttype::normal ? "normal"
+                                                          : "inverted") +
+                "/" + std::to_string(startpos) + "/" + std::to_string(endpos));
     }
 
     ~Handler()
     {
-        moveend();
-        // wait for servo to reach position before releasing driver
-        setdelay(100ms);
+        log(logging::type::info, "Removed servo: " + std::to_string(id));
     }
 
     bool movestart()
     {
-        std::ranges::for_each(group, [](auto servo) { servo->movestart(); });
-        return true;
+        return setpwm(pctmin);
     }
 
     bool moveend()
     {
-        std::ranges::for_each(group, [](auto servo) { servo->moveend(); });
-        return true;
+        return setpwm(pctmax);
     }
 
-    bool moveto(int32_t pos)
+    bool moveto(double pctpos)
     {
-        std::ranges::for_each(group, [pos](auto servo) { servo->moveto(pos); });
-        return true;
-    }
-
-    bool movestart(uint32_t num)
-    {
-        return getservo(num)->movestart();
-    }
-
-    bool moveend(uint32_t num)
-    {
-        return getservo(num)->moveend();
-    }
-
-    bool moveto(uint32_t num, int32_t pos)
-    {
-        return getservo(num)->moveto(pos);
+        return setpwm(pctpos);
     }
 
   private:
-    class Single
+    const std::shared_ptr<logging::LogIf> logif;
+    const uint32_t id;
+    const double pctmin{0.};
+    const double pctmax{100.};
+    const double startpos;
+    const double endpos;
+    const uint32_t freqhz{50}; // -> const uint32_t period{20000000};
+    std::function<double(double)> dutycalc;
+    std::future<void> async;
+    std::shared_ptr<pwm::PwmIf> pwmif;
+
+    bool setpwm(double pctpos)
     {
-      public:
-        Single(Handler* handler, const servoconfig_t& config) :
-            handler{handler}, id{num++}, pwm{"pwm" + std::to_string(id)},
-            startpos{std::get<1>(config)}, endpos{std::get<2>(config)}
-        {
-            setup();
-            switch (std::get<0>(config))
-            {
-                case mounttype::normal:
-                    dutycalc = [this](int32_t pctset) {
-                        if (pctset == pctmin)
-                            return startpos;
-                        if (pctset == pctmax)
-                            return endpos;
-                        return (int32_t)((endpos - startpos) / pctmax * pctset +
-                                         startpos);
-                    };
-                    break;
-                case mounttype::inverted:
-                    dutycalc = [this](int32_t pctset) {
-                        if (pctset == pctmin)
-                            return endpos;
-                        if (pctset == pctmax)
-                            return startpos;
-                        return (int32_t)((startpos - endpos) / pctmax * pctset +
-                                         endpos);
-                    };
-                    break;
-            }
-        }
-        ~Single()
-        {
-            release();
-        }
-
-        bool movestart()
-        {
-            return setpwm(dutycalc(pctmin));
-        }
-
-        bool moveend()
-        {
-            return setpwm(dutycalc(pctmax));
-        }
-
-        bool moveto(int32_t pos)
-        {
-            if (pos >= pctmin && pos <= pctmax)
-            {
-                return setpwm(dutycalc(pos));
-            }
-            throw std::runtime_error(
-                "Servo set to move outside range of percent position");
-        }
-
-      private:
-        static uint32_t num;
-        const Handler* const handler;
-        const uint32_t id;
-        const std::string pwm;
-        const int32_t pctmin{0};
-        const int32_t pctmax{100};
-        const int32_t startpos;
-        const int32_t endpos;
-        const uint32_t period{20000000};
-        std::function<int32_t(int32_t)> dutycalc;
-        std::future<void> async;
-
-        template <typename T>
-        bool wrsysfs(const std::string& path, const T& val) const
-        {
-            if (std::ofstream ofs{path}; ofs.is_open())
-            {
-                ofs << val << std::flush;
-                return true;
-            }
-            throw std::runtime_error("Cannot open sysfs output file " + path);
-        }
-
-        template <typename T>
-        bool rdsysfs(const std::string& path, T& ret) const
-        {
-            if (std::ifstream ifs{path}; ifs.is_open())
-            {
-                ifs >> ret;
-                return true;
-            }
-            throw std::runtime_error("Cannot open sysfs input file " + path);
-        }
-
-        template <typename T>
-        bool wrsysfsset(const std::string& path, const T& val) const
-        {
-            if (T ret{}; wrsysfs(path, val) && rdsysfs(path, ret) && ret == val)
-                return true;
-            throw std::runtime_error("Cannot set value for sysfs file " + path);
-        }
-
-        template <typename T>
-        bool wrsysfscreate(const std::string& path, const T& val,
-                           const std::string& name) const
-        {
-            const auto directory =
-                std::filesystem::path{path}.parent_path() / name;
-            if (wrsysfs(path, val))
-            {
-                uint32_t retries{100};
-                while (retries--)
-                {
-                    handler->setdelay(1ms);
-                    if (std::filesystem::exists(directory) &&
-                        std::ofstream{directory}.is_open())
-                        return true;
-                }
-            }
-            throw std::runtime_error("Cannot create module via sysfs " +
-                                     std::string(directory));
-        }
-
-        template <typename T>
-        bool wrsysfsremove(const std::string& path, const T& val,
-                           const std::string& name) const
-        {
-            const auto directory =
-                std::filesystem::path{path}.parent_path() / name;
-            if (wrsysfs(path, val))
-            {
-                uint32_t retries{100};
-                while (retries--)
-                {
-                    if (!std::filesystem::exists(directory))
-                        return true;
-                    handler->setdelay(1ms);
-                }
-            }
-            throw std::runtime_error("Cannot remove module via sysfs " +
-                                     std::string(directory));
-        }
-
-        bool setup()
-        {
-            return useasync([this]() {
-                wrsysfscreate(handler->driverpath + "export", id,
-                              pwm + "/enable");
-                wrsysfsset(handler->driverpath + pwm + "/enable", 0);
-                wrsysfsset(handler->driverpath + pwm + "/period", period);
-                wrsysfsset(handler->driverpath + pwm + "/polarity", "normal"s);
-                // wrsysfsset(handler->driverpath + pwm + "/polarity",
-                //            "inversed"s);
-                wrsysfsset(handler->driverpath + pwm + "/enable", 1);
-            });
-        }
-
-        bool release()
-        {
-            return useasync([this]() {
-                wrsysfsset(handler->driverpath + pwm + "/enable", 0);
-                wrsysfsremove(handler->driverpath + "unexport", id, pwm);
-            });
-        }
-
-        bool setpwm(uint32_t val)
-        {
-            return useasync([this, val]() {
-                wrsysfsset(handler->driverpath + pwm + "/duty_cycle", val);
-            });
-        }
-
-        bool useasync(std::function<void()>&& func)
-        {
-            if (async.valid())
-                async.wait();
-            async = std::async(std::launch::async, std::move(func));
-            return true;
-        };
-    };
-    const std::string driverpath;
-    std::vector<std::shared_ptr<Single>> group;
-
-    void setdelay(std::chrono::milliseconds time) const
-    {
-        usleep((uint32_t)time.count() * 1000);
+        if (pctpos >= pctmin && pctpos <= pctmax)
+            return useasync(
+                [this, pctpos]() { pwmif->setduty(dutycalc(pctpos)); });
+        throw std::runtime_error(
+            "Servo set to move outside range of percent position: " +
+            std::to_string(pctpos));
     }
 
-    std::shared_ptr<Single> getservo(uint32_t num)
+    bool useasync(std::function<void()>&& func)
     {
-        if (num < group.size())
-            return group[num];
-        throw std::runtime_error(
-            "Requested servo number is outside defined group");
+        if (async.valid())
+            async.wait();
+        async = std::async(std::launch::async, std::move(func));
+        return true;
+    };
+
+    void log(
+        logging::type type, const std::string& msg,
+        const std::source_location loc = std::source_location::current()) const
+    {
+        if (logif)
+            logif->log(type, std::string{loc.function_name()}, msg);
     }
 };
-uint32_t Servo::Handler::Single::num{0};
 
 Servo::Servo(const config_t& config) :
     handler{std::make_unique<Handler>(config)}
@@ -279,24 +138,9 @@ bool Servo::moveend()
     return handler->moveend();
 }
 
-bool Servo::moveto(int32_t pos)
+bool Servo::moveto(double pos)
 {
     return handler->moveto(pos);
-}
-
-bool Servo::movestart(uint32_t num)
-{
-    return handler->movestart(num);
-}
-
-bool Servo::moveend(uint32_t num)
-{
-    return handler->moveend(num);
-}
-
-bool Servo::moveto(uint32_t num, int32_t pos)
-{
-    return handler->moveto(num, pos);
 }
 
 } // namespace servo::rpi::pca9685
