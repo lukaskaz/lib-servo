@@ -43,11 +43,11 @@ int main(int argc, char** argv)
                     // SH-0254MG: refreshrate: 240hz; neutral position: 1500us;
                     // max travel 800us -> 2200us [150dgr];
                     static const auto refreshratehz{240};
-                    static const auto neutralpos{1500us}, leftpos{2200us},
-                        rightpos{800us};
+                    static const auto neutralpos{1500us}, leftpos{800us},
+                        rightpos{2200us};
                     auto iface = servo::Factory::create<Servo, config_t>(
                         {driverpath, num,
-                         num % 2 == 0 ? mounttype::normal : mounttype::inverted,
+                         num % 2 == 0 ? mounttype::inverted : mounttype::normal,
                          refreshratehz, neutralpos, leftpos, rightpos, logif});
                     servos.push_back(iface);
                 });
