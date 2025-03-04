@@ -1,4 +1,4 @@
-#include "servo/interfaces/rpi/pca9685/servo.hpp"
+#include "servo/interfaces/digital/rpi/pca9685/servo.hpp"
 
 #include "pwm/interfaces/rpi/pca9685/pwm.hpp"
 
@@ -13,26 +13,36 @@ struct Servo::Handler
 {
   public:
     explicit Handler(const config_t& config) :
-        logif{std::get<5>(config)}, id{std::get<1>(config)},
-        startpos{std::get<3>(config)}, endpos{std::get<4>(config)}
+        logif{std::get<7>(config)}, id{std::get<1>(config)},
+        refreshrate{std::get<3>(config)}, posneutral{posfrompulse(
+                                              std::get<4>(config))},
+        posleft{posfrompulse(std::get<5>(config))}, posright{posfrompulse(
+                                                        std::get<6>(config))}
     {
+        auto driver{std::get<0>(config)};
+        auto mount{std::get<2>(config)};
+
         using namespace pwm::rpi::pca9685;
         pwmif = pwm::Factory::create<Pwm, pwm::rpi::pca9685::config_t>(
-            {id, 0, freqhz, polaritytype::normal, std::get<0>(config), logif});
+            {id, 0, refreshrate, polaritytype::normal, driver, logif});
 
-        switch (std::get<2>(config))
+        switch (mount)
         {
             case mounttype::normal:
                 dutycalc = [this](double pctset) {
                     double duty{};
                     if (pctset == pctmin)
-                        duty = startpos;
+                        duty = posleft;
                     else if (pctset == pctmax)
-                        duty = endpos;
+                        duty = posright;
+                    else if (pctset == pctmid)
+                        duty = posneutral;
                     else
-                        duty = pctset * (endpos - startpos) / pctmax + startpos;
+                        duty = (pctset - pctmin) * (posright - posleft) /
+                                   (pctmax - pctmin) +
+                               posleft;
                     log(logs::level::debug,
-                        "Servo duty[" + std::to_string(id) + "/norm]: '" +
+                        "Servo duty[" + std::to_string(id) + "/invr]: '" +
                             std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
                     return duty;
@@ -42,13 +52,17 @@ struct Servo::Handler
                 dutycalc = [this](double pctset) {
                     double duty{};
                     if (pctset == pctmin)
-                        duty = endpos;
+                        duty = posright;
                     else if (pctset == pctmax)
-                        duty = startpos;
+                        duty = posleft;
+                    else if (pctset == pctmid)
+                        duty = posneutral;
                     else
-                        duty = pctset * (startpos - endpos) / pctmax + endpos;
+                        duty = (pctset - pctmin) * (posleft - posright) /
+                                   (pctmax - pctmin) +
+                               posright;
                     log(logs::level::debug,
-                        "Servo duty[" + std::to_string(id) + "/invr]: '" +
+                        "Servo duty[" + std::to_string(id) + "/norm]: '" +
                             std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
                     return duty;
@@ -58,10 +72,8 @@ struct Servo::Handler
 
         log(logs::level::info,
             "Created servo [id/mount/startpos/endpos]: " + std::to_string(id) +
-                "/" +
-                (std::get<2>(config) == mounttype::normal ? "normal"
-                                                          : "inverted") +
-                "/" + std::to_string(startpos) + "/" + std::to_string(endpos));
+                "/" + (mount == mounttype::normal ? "normal" : "inverted") +
+                "/" + std::to_string(posleft) + "/" + std::to_string(posright));
     }
 
     ~Handler()
@@ -69,14 +81,19 @@ struct Servo::Handler
         log(logs::level::info, "Removed servo: " + std::to_string(id));
     }
 
-    bool movestart()
+    bool moveleft()
     {
         return setpwm(pctmin);
     }
 
-    bool moveend()
+    bool moveright()
     {
         return setpwm(pctmax);
+    }
+
+    bool movecenter()
+    {
+        return setpwm(pctmid);
     }
 
     bool moveto(double pctpos)
@@ -87,11 +104,14 @@ struct Servo::Handler
   private:
     const std::shared_ptr<logs::LogIf> logif;
     const uint32_t id;
-    const double pctmin{0.};
-    const double pctmax{100.};
-    const double startpos;
-    const double endpos;
-    const uint32_t freqhz{50}; // -> const uint32_t period{20000000};
+    const double pctmin{-50.};
+    const double pctmax{50.};
+    const double pctmid{0.};
+    // digital servos req refresh with freq 50-400 hz, let the user select
+    const uint32_t refreshrate;
+    const double posneutral;
+    const double posleft;
+    const double posright;
     std::function<double(double)> dutycalc;
     std::future<void> async;
     std::shared_ptr<pwm::PwmIf> pwmif;
@@ -104,6 +124,17 @@ struct Servo::Handler
         throw std::runtime_error(
             "Servo set to move outside range of percent position: " +
             std::to_string(pctpos));
+    }
+
+    double posfrompulse(std::chrono::microseconds pulsetime)
+    {
+        static constexpr auto timehz = std::chrono::microseconds{1s};
+        auto period = (double)timehz.count() / refreshrate;
+        auto pos = 100. * (double)pulsetime.count() / period;
+        log(logs::level::debug, "Position[" + std::to_string(id) + "]: '" +
+                                    std::to_string(pos) + "' from pulse '" +
+                                    std::to_string(pulsetime.count()) + "'");
+        return pos;
     }
 
     bool useasync(std::function<void()>&& func)
@@ -128,14 +159,19 @@ Servo::Servo(const config_t& config) :
 {}
 Servo::~Servo() = default;
 
-bool Servo::movestart()
+bool Servo::moveleft()
 {
-    return handler->movestart();
+    return handler->moveleft();
 }
 
-bool Servo::moveend()
+bool Servo::moveright()
 {
-    return handler->moveend();
+    return handler->moveright();
+}
+
+bool Servo::movecenter()
+{
+    return handler->movecenter();
 }
 
 bool Servo::moveto(double pos)
