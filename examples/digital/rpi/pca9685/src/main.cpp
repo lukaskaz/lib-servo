@@ -1,4 +1,6 @@
 #include "logs/interfaces/console/logs.hpp"
+#include "logs/interfaces/group/logs.hpp"
+#include "logs/interfaces/storage/logs.hpp"
 #include "servo/interfaces/digital/rpi/pca9685/servo.hpp"
 #include "servo/interfaces/group/servo.hpp"
 
@@ -25,8 +27,16 @@ int main(int argc, char** argv)
             auto sequence = std::views::iota(0, amount);
             std::vector<std::shared_ptr<servo::ServoIf>> servos;
 
-            auto logif = logs::Factory::create<logs::console::Log,
-                                               logs::console::config_t>(loglvl);
+            auto logconsole = logs::Factory::create<logs::console::Log,
+                                                    logs::console::config_t>(
+                {loglvl, logs::time::hide, logs::tags::hide});
+            auto logstorage = logs::Factory::create<logs::storage::Log,
+                                                    logs::storage::config_t>(
+                {loglvl, logs::time::show, logs::tags::show, {}});
+            auto logif =
+                logs::Factory::create<logs::group::Log, logs::group::config_t>(
+                    {logconsole, logstorage});
+
             std::ranges::for_each(
                 sequence, [&driverpath, &servos, logif](uint8_t num) {
                     using namespace servo::rpi::pca9685;
@@ -34,11 +44,11 @@ int main(int argc, char** argv)
                     // SH-0254MG: refreshrate: 240hz; neutral position: 1500us;
                     // max travel 800us -> 2200us [150dgr];
                     static const auto refreshratehz{240};
-                    static const auto neutralpos{1500us}, leftpos{2200us},
-                        rightpos{800us};
+                    static const auto neutralpos{1500us}, leftpos{800us},
+                        rightpos{2200us};
                     auto iface = servo::Factory::create<Servo, config_t>(
                         {driverpath, num,
-                         num % 2 == 0 ? mounttype::normal : mounttype::inverted,
+                         num % 2 == 0 ? mounttype::inverted : mounttype::normal,
                          refreshratehz, neutralpos, leftpos, rightpos, logif});
                     servos.push_back(iface);
                 });

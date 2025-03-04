@@ -3,8 +3,11 @@
 #include "logs/interfaces/logs.hpp"
 #include "servo/factory.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <tuple>
+
+using namespace std::chrono_literals;
 
 namespace servo::rpi::pca9685
 {
@@ -15,15 +18,18 @@ enum class mounttype
     inverted
 };
 
-using config_t = std::tuple<std::string, uint32_t, mounttype, double, double,
-                            std::shared_ptr<logs::LogIf>>;
+using config_t =
+    std::tuple<std::string, uint32_t, mounttype, uint32_t,
+               std::chrono::microseconds, std::chrono::microseconds,
+               std::chrono::microseconds, std::shared_ptr<logs::LogIf>>;
 
 class Servo : public ServoIf
 {
   public:
     ~Servo();
-    bool movestart() override;
-    bool moveend() override;
+    bool moveleft() override;
+    bool moveright() override;
+    bool movecenter() override;
     bool moveto(double) override;
 
   private:
