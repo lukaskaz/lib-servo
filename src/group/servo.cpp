@@ -15,13 +15,13 @@ struct Servo::Handler
     explicit Handler(const config_t& config) :
         logif{std::get<1>(config)}, servos{std::get<0>(config)}
     {
-        log(logging::type::info,
+        log(logs::level::info,
             "Created group of servos num: " + std::to_string(servos.size()));
     }
 
     ~Handler()
     {
-        log(logging::type::info,
+        log(logs::level::info,
             "Removed group of servos num: " + std::to_string(servos.size()));
     }
 
@@ -48,7 +48,7 @@ struct Servo::Handler
     }
 
   private:
-    const std::shared_ptr<logging::LogIf> logif;
+    const std::shared_ptr<logs::LogIf> logif;
     const std::vector<std::shared_ptr<servo::ServoIf>> servos;
     std::future<void> async;
 
@@ -62,11 +62,11 @@ struct Servo::Handler
     };
 
     void log(
-        logging::type type, const std::string& msg,
+        logs::level level, const std::string& msg,
         const std::source_location loc = std::source_location::current()) const
     {
         if (logif)
-            logif->log(type, std::string{loc.function_name()}, msg);
+            logif->log(level, std::string{loc.function_name()}, msg);
     }
 };
 

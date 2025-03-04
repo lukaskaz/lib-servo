@@ -1,6 +1,6 @@
 #pragma once
 
-#include "log/interfaces/logging.hpp"
+#include "log/interfaces/logs.hpp"
 #include "servo/factory.hpp"
 
 #include <tuple>
@@ -10,7 +10,7 @@ namespace servo::group
 {
 
 using config_t = std::tuple<std::vector<std::shared_ptr<servo::ServoIf>>,
-                            std::shared_ptr<logging::LogIf>>;
+                            std::shared_ptr<logs::LogIf>>;
 
 class Servo : public ServoIf
 {
