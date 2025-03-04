@@ -1,6 +1,6 @@
 #pragma once
 
-#include "log/interfaces/logging.hpp"
+#include "logs/interfaces/logs.hpp"
 #include "servo/factory.hpp"
 
 #include <cstdint>
@@ -16,7 +16,7 @@ enum class mounttype
 };
 
 using config_t = std::tuple<std::string, uint32_t, mounttype, double, double,
-                            std::shared_ptr<logging::LogIf>>;
+                            std::shared_ptr<logs::LogIf>>;
 
 class Servo : public ServoIf
 {

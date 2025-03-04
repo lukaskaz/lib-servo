@@ -31,7 +31,7 @@ struct Servo::Handler
                         duty = endpos;
                     else
                         duty = pctset * (endpos - startpos) / pctmax + startpos;
-                    log(logging::type::debug,
+                    log(logs::level::debug,
                         "Servo duty[" + std::to_string(id) + "/norm]: '" +
                             std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
@@ -47,7 +47,7 @@ struct Servo::Handler
                         duty = startpos;
                     else
                         duty = pctset * (startpos - endpos) / pctmax + endpos;
-                    log(logging::type::debug,
+                    log(logs::level::debug,
                         "Servo duty[" + std::to_string(id) + "/invr]: '" +
                             std::to_string(duty) + "' from perc '" +
                             std::to_string(pctset) + "'");
@@ -56,7 +56,7 @@ struct Servo::Handler
                 break;
         }
 
-        log(logging::type::info,
+        log(logs::level::info,
             "Created servo [id/mount/startpos/endpos]: " + std::to_string(id) +
                 "/" +
                 (std::get<2>(config) == mounttype::normal ? "normal"
@@ -66,7 +66,7 @@ struct Servo::Handler
 
     ~Handler()
     {
-        log(logging::type::info, "Removed servo: " + std::to_string(id));
+        log(logs::level::info, "Removed servo: " + std::to_string(id));
     }
 
     bool movestart()
@@ -85,7 +85,7 @@ struct Servo::Handler
     }
 
   private:
-    const std::shared_ptr<logging::LogIf> logif;
+    const std::shared_ptr<logs::LogIf> logif;
     const uint32_t id;
     const double pctmin{0.};
     const double pctmax{100.};
@@ -115,11 +115,11 @@ struct Servo::Handler
     };
 
     void log(
-        logging::type type, const std::string& msg,
+        logs::level level, const std::string& msg,
         const std::source_location loc = std::source_location::current()) const
     {
         if (logif)
-            logif->log(type, std::string{loc.function_name()}, msg);
+            logif->log(level, std::string{loc.function_name()}, msg);
     }
 };
 
