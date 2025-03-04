@@ -8,5 +8,5 @@ if(POLICY CMP0002)
 endif()
 
 if(ADD_EXAMPLES)
-    add_subdirectory(rpi/pca9685)
+    add_subdirectory(digital/rpi/pca9685)
 endif()

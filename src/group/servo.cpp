@@ -25,17 +25,24 @@ struct Servo::Handler
             "Removed group of servos num: " + std::to_string(servos.size()));
     }
 
-    bool movestart()
+    bool moveleft()
     {
         std::ranges::for_each(servos,
-                              [this](const auto servo) { servo->movestart(); });
+                              [this](const auto servo) { servo->moveleft(); });
         return true;
     }
 
-    bool moveend()
+    bool moveright()
     {
         std::ranges::for_each(servos,
-                              [this](const auto servo) { servo->moveend(); });
+                              [this](const auto servo) { servo->moveright(); });
+        return true;
+    }
+
+    bool movecenter()
+    {
+        std::ranges::for_each(
+            servos, [this](const auto servo) { servo->movecenter(); });
         return true;
     }
 
@@ -75,14 +82,19 @@ Servo::Servo(const config_t& config) :
 {}
 Servo::~Servo() = default;
 
-bool Servo::movestart()
+bool Servo::moveleft()
 {
-    return handler->movestart();
+    return handler->moveleft();
 }
 
-bool Servo::moveend()
+bool Servo::moveright()
 {
-    return handler->moveend();
+    return handler->moveright();
+}
+
+bool Servo::movecenter()
+{
+    return handler->movecenter();
 }
 
 bool Servo::moveto(double pos)

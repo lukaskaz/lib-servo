@@ -16,8 +16,9 @@ class Servo : public ServoIf
 {
   public:
     ~Servo();
-    bool movestart() override;
-    bool moveend() override;
+    bool moveleft() override;
+    bool moveright() override;
+    bool movecenter() override;
     bool moveto(double) override;
 
   private:
