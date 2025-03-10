@@ -36,6 +36,7 @@ int main(int argc, char** argv)
             auto logif =
                 logs::Factory::create<logs::group::Log, logs::group::config_t>(
                     {logconsole, logstorage});
+
             std::ranges::for_each(
                 sequence, [&driverpath, &servos, logif](uint8_t num) {
                     using namespace servo::rpi::pca9685;
